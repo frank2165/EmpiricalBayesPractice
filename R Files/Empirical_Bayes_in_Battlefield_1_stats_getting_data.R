@@ -11,7 +11,6 @@ country            <- "United States"
 
 
 # Attach Packages
-library(xml2)
 library(httr)
 library(rvest)
 library(dplyr)
@@ -21,13 +20,14 @@ library(magrittr)
 
 
 
+
 ###################################################################################
 #                               Helper Functions                                  #
 ###################################################################################
 
 # Crawl through each page of the leaderboard and parse the result to a data frame.
-get_leaderboard <- function(url, first.page = 1, last.page = 2, 
-                            region = NULL, save.file = NULL, load.file = NULL){
+get_leaderboard <- function(url, first.page = 1, last.page = 2, region = NULL, 
+                            save.file = NULL, load.file = NULL, ...){
     
     if(!is.null(load.file)){
         return(readRDS(load.file))
@@ -43,7 +43,7 @@ get_leaderboard <- function(url, first.page = 1, last.page = 2,
     }
     
     
-    catalog <- paste0(url, query) %>% lapply(GET)
+    catalog <- paste0(url, query) %>% lapply(function(x) GET(x, ...))
     
     # NOTE: this stage may not be robust to receiving a 404 response
     status <- vapply(catalog, function(x) x$status_code, integer(1))

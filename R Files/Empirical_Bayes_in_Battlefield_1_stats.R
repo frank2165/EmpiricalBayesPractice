@@ -9,17 +9,20 @@
 ##          with the goal of identifying players who probably have a win rate
 ##          in excess of 50%.
 ##
+## NOTE: Initial data extraction failed to produce many more than 1000 results,
+##  need to determine why and pull data again.
 
 
 # Globals
-kd.save.file       <- "KdRatioLeaderboard.rd"
-winrate.save.file  <- "WinRateLeaderboard.rd"
-headshot.save.file <- "LongestHeadshotLeaderboard.rd"
+kd.save.file       <- "../Data/KdRatioLeaderboard.rd"
+winrate.save.file  <- "../Data/WinRateLeaderboard.rd"
+headshot.save.file <- "../Data/LongestHeadshotLeaderboard.rd"
 
 
 # Attach Packages
 library(dplyr)
 library(purrr)
+library(ggplot2)
 library(magrittr)
 
 
@@ -29,7 +32,17 @@ library(magrittr)
 #                               Helper Functions                                  #
 ###################################################################################
 
+mfloor <- function(x, base){
+    floor(x / base) * base
+}
 
+mround <- function(x, base){
+    round(x / base) * base
+}
+
+mceiling <- function(x, base){
+    ceiling(x / base) * base
+}
 
 
 
@@ -78,7 +91,21 @@ winrate <- readRDS(file = winrate.save.file) %>%
 
 
 # Look at data to see if two different populations present themselves
-
+## Observation: There appears to be two clusters of distances, the main cluster
+##  occupying the 0m-959m range and a second cluster which occupies the 1032m-
+##  1073m range. It looks like the main cluster has an extremely long tail and
+##  the ability of a player to land a headshot at 800m without assistance (on
+##  console) is doubtful; where to draw the line though? Currently 750m will
+##  be used as the upper limit for the prior distribution.
+xmin <- headshot$LongestHeadshot %>% min %>% mfloor(50)
+xmax <- headshot$LongestHeadshot %>% max %>% mceiling(50)
+ggplot(headshot, aes(x = LongestHeadshot)) + 
+    geom_histogram(fill = "blue", colour = "black", alpha = 0.4, 
+                   binwidth = 25) + 
+    scale_x_continuous(limits = c(xmin, xmax), breaks = seq(xmin, xmax, 100)) + 
+    theme_classic() + 
+    labs(x = "Headshot Distance", y = "Count") + 
+    guides(fill = FALSE)
 
 
 # See if any of the following distributions suggest themselves as being a good
@@ -87,7 +114,7 @@ winrate <- readRDS(file = winrate.save.file) %>%
 #   - Weibull Distribution,
 #   - Gumbel Distribution,
 #   - Generalised Extreme Value Distribution
-
+dplyr::filter()
 
 
 
