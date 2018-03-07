@@ -24,6 +24,7 @@ library(dplyr)
 library(purrr)
 library(ggplot2)
 library(magrittr)
+library(mixtools)
 
 
 
@@ -57,7 +58,8 @@ headshot <- readRDS(file = headshot.save.file) %>%
                strsplit("\n") %>% 
                vapply(function(x) x[length(x)], character(1)) %>% 
                gsub("\\,", "", .) %>%
-               as.numeric)
+               as.numeric) %>% 
+    dplyr::filter(LongestHeadshot > 0)
 
 
 kdr <- readRDS(file = kd.save.file) %>% 
@@ -99,27 +101,46 @@ winrate <- readRDS(file = winrate.save.file) %>%
 ##  be used as the upper limit for the prior distribution.
 xmin <- headshot$LongestHeadshot %>% min %>% mfloor(50)
 xmax <- headshot$LongestHeadshot %>% max %>% mceiling(50)
-ggplot(headshot, aes(x = LongestHeadshot)) + 
-    geom_histogram(fill = "blue", colour = "black", alpha = 0.4, 
+hs <- ggplot(headshot, aes(x = LongestHeadshot)) + 
+    geom_histogram(aes(y = ..density..), fill = "blue", colour = "black", alpha = 0.4, 
                    binwidth = 25) + 
     scale_x_continuous(limits = c(xmin, xmax), breaks = seq(xmin, xmax, 100)) + 
     theme_classic() + 
-    labs(x = "Headshot Distance", y = "Count") + 
+    labs(x = "Headshot Distance", y = "Count", 
+         caption = "Distribution of 'Longest Headshot Distance' recorded by 'battlefield tracker' for 10,213 xbox players in the \n United States.") + 
+    theme(plot.caption = element_text(hjust = 0)) + 
+    guides(fill = FALSE)
+
+hs
+
+
+# Look for multiple sub-populations
+em <- normalmixEM(headshot$LongestHeadshot, k = 2, fast = TRUE)
+headshot <- mutate(headshot, 
+                   Pr.k1 = dnorm(LongestHeadshot, em$mu[1], em$sigma[1]),
+                   Pr.k2 = dnorm(LongestHeadshot, em$mu[2], em$sigma[2]), 
+                   k1    = Pr.k1 > Pr.k2)
+
+ggplot(headshot, aes(x = LongestHeadshot, group = k1)) + 
+    geom_histogram(aes(fill = k1), colour = "black", alpha = 0.4, 
+                   binwidth = 25) + 
+    scale_x_continuous(limits = c(xmin, xmax), breaks = seq(xmin, xmax, 100)) + 
+    scale_fill_manual(values = c("blue", "red")) + 
+    theme_classic() + 
+    labs(x = "Headshot Distance", y = "Count", 
+         caption = "Distribution of 'Longest Headshot Distance' recorded by 'battlefield tracker' for 10,213 xbox players in the \n United States.") + 
+    theme(plot.caption = element_text(hjust = 0)) + 
     guides(fill = FALSE)
 
 
-# See if any of the following distributions suggest themselves as being a good
-# fit to the data:
-#   - Normal Distribution,
-#   - Weibull Distribution,
-#   - Gumbel Distribution,
-#   - Generalised Extreme Value Distribution
-dplyr::filter()
+## Notes: Could not find a right-skewed distribution that appropriately matched
+##  the data. Speculate that a mixture of normal distributions will be a good
+##  enough approximation, or a normal and an exponential distribution.
 
 
-
-# Fit model to data to obtain prior parameters
-
+# Superimpose the distribution on the histogram
+hs + stat_function(fun = function(x) dnorm(x, mean = normal.coefs$mu, sd = normal.coefs$sigma),
+                   col = "red", size = 1)
 
 
 

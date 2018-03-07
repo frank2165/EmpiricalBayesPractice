@@ -4,10 +4,14 @@
 
 # Globals
 bf1URL <- "https://battlefieldtracker.com/bf1/leaderboards/xbox/"
-kd.save.file       <- "KdRatioLeaderboard.rd"
-winrate.save.file  <- "WinRateLeaderboard.rd"
-headshot.save.file <- "LongestHeadshotLeaderboard.rd"
+kd.save.file       <- "../Data/KdRatioLeaderboard.rd"
+winrate.save.file  <- "../Data/WinRateLeaderboard.rd"
+headshot.save.file <- "../Data/LongestHeadshotLeaderboard.rd"
 country            <- "United States"
+
+
+# Make sure 'Data' directory exists
+dir.create("../Data", showWarnings = FALSE)
 
 
 # Attach Packages
@@ -89,7 +93,7 @@ parse_leaderboard <- function(page){
     df <- df[-1, 1:4]
     
     # Remove residual html that results from banner ads
-    check.ad <- suppressWarnings(df[[1]] %>% as.integer %>% is.na %>% which)
+    check.ad <- suppressWarnings(df[[1]] %>% gsub("\\,", "", .) %>% as.integer %>% is.na %>% which)
     if(length(check.ad) > 0){
         df <- df[-check.ad, ]
     }
