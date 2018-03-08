@@ -17,6 +17,7 @@
 kd.save.file       <- "../Data/KdRatioLeaderboard.rd"
 winrate.save.file  <- "../Data/WinRateLeaderboard.rd"
 headshot.save.file <- "../Data/LongestHeadshotLeaderboard.rd"
+winrate.conq.save.file <- "../Data/WinRateConquestLeaderboard.rd"
 
 
 # Attach Packages
@@ -24,6 +25,7 @@ library(VGAM)
 library(dplyr)
 library(purrr)
 library(stats4)
+library(gamlss)
 library(ggplot2)
 library(magrittr)
 library(mixtools)
@@ -47,10 +49,13 @@ mceiling <- function(x, base){
     ceiling(x / base) * base
 }
 
-data_histogram <- function(data, x){
+data_histogram <- function(data, x, nbins = NULL){
     
-    nbins <- nrow(data) %>% sqrt %>% floor %>% c(20) %>% min
-    data  <- rename_(data, .dots = list(x = x))
+    if(is.null(nbins)){
+        nbins <- nrow(data) %>% sqrt %>% floor %>% c(20) %>% min
+    }
+    
+    data <- rename_(data, .dots = list(x = x))
     
     
     ggplot(data, aes(x = x)) + 
@@ -84,8 +89,8 @@ kdr <- readRDS(file = kd.save.file) %>%
                as.numeric)
 
 
-winrate <- readRDS(file = winrate.save.file) %>% 
-    rename(WinRate = "W/L Ratio") %>% 
+winrate <- readRDS(file = winrate.conq.save.file) %>% 
+    rename(WinRate = "Win %") %>% 
     mutate(WinRate = WinRate %>% 
                strsplit("\n") %>% 
                vapply(function(x) x[length(x)], character(1)) %>% 
@@ -95,9 +100,128 @@ winrate <- readRDS(file = winrate.save.file) %>%
            Games   = as.integer(Games))
 
 
+###################################################################################
+#                                   Part 1: Win Rate                              #
+###################################################################################
+
+## Notes: Both the distribution of WinRate and of the number of games played (Games)
+##  seem fairly regular, i.e. unimodal with no large outliers.
+##
+
+# Estimate the number of Wins and Losses, from the WinRate and number of Games,
+# NOTE: Will have to abide a non-integer number of both due to the numerical precison
+#   of the WinRate (2 decimal places).
+winrate <- mutate(winrate, Wins = Games * WinRate, Losses = Games * (1 - WinRate))
+
+
+# Examine data and look for a "typical" distribution
+data_histogram(winrate, "WinRate", nbins = 50)
+data_histogram(winrate, "Games", nbins = 100) + 
+    scale_x_continuous(breaks = seq(0, max(winrate$Games), 500))
+
+games.binned <- hist(winrate$Games, breaks = seq(0, max(winrate$Games)+50, 50), plot = FALSE)
+games.mode   <- games.binned$mids[which.max(games.binned$density)]
+
+
+ggplot(mapping = aes(x = WinRate)) + 
+    geom_density(data = winrate, colour = "red", size = 1) + 
+    geom_density(data = dplyr::filter(winrate, Games > mceiling(games.mode, 500)), 
+                 colour = "blue", size = 1) + 
+    theme_classic()
+
+
+# Data for fitting prior distribution hyper-parameters
+prior.data <- dplyr::filter(winrate, Games > mfloor(games.mode, 50)) %>% 
+    mutate(Wins = round(Wins), Losses = Games - Wins)
+
+
+# See how the beta distribution fits the data and calculate the prior parameters.
+# Beta-Binomial distribution (mean/variance parameterisation) 
+bbin.ll <- function(a, b){
+    -sum(dbetabinom.ab(x = prior.data$Wins, size = prior.data$Games, shape1 = a, shape2 = b, log = TRUE))
+}
+
+
+mu0    <- mean(prior.data$WinRate)
+sigma0 <- sd(prior.data$WinRate)
+a0 <- mu0 * mean(winrate$Games)
+b0 <- (1 - mu0) * mean(winrate$Games)
+
+
+# Get parameters
+prior.dist <- mle(minuslogl = bbin.ll, start = list(a = a0, b = b0), 
+                  method = "L-BFGS-B", lower = c(1e-2, 1e-2))
+
+
+prior.pars <- coef(prior.dist) %>% as.list
+
+
+# Plot result
+nbins <- nrow(prior.data) %>% sqrt %>% floor %>% c(20) %>% min
+ggplot(prior.data, aes(x = WinRate)) + 
+    geom_histogram(aes(y = ..density..), fill = "blue", colour = "black", alpha = 0.4, 
+                   binwidth = 0.01) +
+    stat_function(fun = function(x) dbeta(x, shape1 = prior.pars$a, shape2 = prior.pars$b),
+                  colour = "red", size = 1) +
+    theme_classic()
+
+
+
+# Go ahead and make predictions anyway
+prior.pars$aplusb <- prior.pars$a + prior.pars$b
+winrate <- mutate(winrate, eb_WinRate = (prior.pars$a + Wins) / 
+                      (prior.pars$aplusb + Games))
+
+
+ggplot(winrate) + 
+    geom_histogram(aes(x = WinRate), fill = "blue", colour = "black", alpha = 0.4, bins = 40) + 
+    geom_histogram(aes(x = eb_WinRate), fill = "red", colour = "black", alpha = 0.4, bins = 40) + 
+    theme_classic()
+
+
+# Relationship (or lack thereof) between Win rate and Games played
+ggplot(winrate, aes(x = log(Games), y = WinRate)) + 
+    geom_point() + 
+    geom_smooth(method = "lm", colour = "red") + 
+    theme_bw()
+
+ggplot(winrate, aes(x = log(Games), y = eb_WinRate)) + 
+    geom_point() + 
+    geom_smooth(method = "lm", colour = "red") + 
+    theme_bw()
+
+
+
+# Regression time
+regData <- mutate(winrate, Wins = round(Wins), Losses = Games - Wins)
+fit <- gamlss(cbind(Wins, Losses) ~ log(Games), data = regData,
+              family = BB(mu.link = "logit"))
+
+tidy.fit <- broom::tidy(fit)
+
+
+winrate <- mutate(winrate, mu = predict(fit, newdata = winrate, parameter = "mu"),
+                  sigma = predict(fit, newdata = winrate, parameter = "sigma", type = "response"), 
+                  a = mu / sigma, b = (1/sigma) - a, 
+                  eb_reg_WinRate = (a + Wins) / (a + b + Games))
+
+
+
+ggplot(winrate) + 
+    geom_histogram(aes(x = WinRate), fill = "blue", colour = "black", alpha = 0.4, bins = 40) + 
+    geom_histogram(aes(x = eb_reg_WinRate), fill = "red", colour = "black", alpha = 0.4, bins = 40) + 
+    theme_classic()
+
+
+ggplot(winrate, aes(x = eb_WinRate, y = eb_reg_WinRate)) + 
+    geom_point(aes(group = Games, colour = Games)) + 
+    geom_abline(intercept = 0, slope = 1, colour = "black") + 
+    scale_colour_continuous(low = "#3a62f2", high = "#01005b") + 
+    theme_bw()
+
 
 ###################################################################################
-#                               Part 1: Longest Headshot                          #
+#                               Part 3: Longest Headshot                          #
 ###################################################################################
 
 ## Notes: the results of this analysis are subject to the arbitrary specification
@@ -204,81 +328,6 @@ hs + stat_function(fun = function(x) dnorm(x, mean = normal.coefs$mu, sd = norma
 
 # For each player on the leaderboard, derive an estimate of their actual kill-death
 # ratio and identify players that stand-out.
-
-
-
-
-
-
-
-
-
-###################################################################################
-#                                   Part 3: Win Rate                              #
-###################################################################################
-
-## Notes: Both the distribution of WinRate and of the number of games played (Games)
-##  seem fairly regular, i.e. unimodal with no large outliers.
-##
-
-# Estimate the number of Wins and Losses, from the WinRate and number of Games,
-# NOTE: Will have to abide a non-integer number of both due to the numerical precison
-#   of the WinRate (2 decimal places).
-winrate <- mutate(winrate, Wins = Games * WinRate, Losses = Games * (1 - WinRate))
-
-
-# Examine data and look for a "typical" distribution
-data_histogram(winrate, "WinRate")
-data_histogram(winrate, "Games") + 
-    scale_x_continuous(breaks = seq(0, max(winrate$Games), 500))
-
-games.binned <- hist(winrate$Games, breaks = seq(0, max(winrate$Games)+50, 50), plot = FALSE)
-games.mode   <- games.binned$mids[which.max(games.binned$density)]
-
-
-# Data for fitting prior distribution hyper-parameters
-prior.data <- dplyr::filter(winrate, Games > 300) %>% 
-    mutate(Wins = round(Wins), Losses = Games - Wins)
-
-
-# See how the beta distribution fits the data and calculate the prior parameters.
-# Beta-Binomial distribution (mean/variance parameterisation) 
-bbin.ll <- function(a, b){
-    -sum(dbetabinom.ab(x = prior.data$Wins, size = prior.data$Games, shape1 = a, shape2 = b, log = TRUE))
-}
-
-
-a0 <- mean(prior.data$Losses)
-b0 <- mean(prior.data$Wins) * mean(prior.data$WinRate)
-
-
-# Get parameters
-prior.dist <- mle(minuslogl = bbin.ll, start = list(a = a0, b = b0), 
-                  method = "L-BFGS-B", 
-                  lower = c(1e-2, 1e-2))
-
-
-prior.pars <- coef(prior.dist) %>% as.list
-
-
-# Plot result
-nbins <- nrow(prior.data) %>% sqrt %>% floor %>% c(20) %>% min
-ggplot(prior.data, aes(x = WinRate)) + 
-    geom_histogram(aes(y = ..density..), fill = "blue", colour = "black", alpha = 0.4, 
-                   binwidth = 0.01) +
-    stat_function(fun = function(x) dbeta(x, shape1 = prior.pars$a, shape2 = prior.pars$b),
-                  colour = "red", size = 1) +
-    theme_classic()
-
-
-# Estimate the actual win rate for each player
-
-
-
-
-
-
-
 
 
 

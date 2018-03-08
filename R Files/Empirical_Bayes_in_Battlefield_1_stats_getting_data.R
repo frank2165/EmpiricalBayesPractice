@@ -3,12 +3,12 @@
 ## 
 
 # Globals
-bf1URL <- "https://battlefieldtracker.com/bf1/leaderboards/xbox/"
+bf1URL  <- "https://battlefieldtracker.com/bf1/leaderboards/xbox/"
+country <- "United States"
 kd.save.file       <- "../Data/KdRatioLeaderboard.rd"
 winrate.save.file  <- "../Data/WinRateLeaderboard.rd"
 headshot.save.file <- "../Data/LongestHeadshotLeaderboard.rd"
-country            <- "United States"
-
+winrate.conq.save.file  <- "../Data/WinRateConquestLeaderboard.rd"
 
 # Make sure 'Data' directory exists
 dir.create("../Data", showWarnings = FALSE)
@@ -30,24 +30,55 @@ library(magrittr)
 ###################################################################################
 
 # Crawl through each page of the leaderboard and parse the result to a data frame.
-get_leaderboard <- function(url, first.page = 1, last.page = 2, region = NULL, 
+get_leaderboard <- function(platform = c("all", "xbox", "psn", "pc"),
+                            stat = c("Wl", "Kd", "LongestHeadshot", "AccuracyRatio"), 
+                            country = c("none", "United States", "United Kingdom", "Australia"), 
+                            mode = c("none", "conquest", "rush", "domination", "operations", "frontlines"), 
+                            first.page = 1, last.page = 2, 
                             save.file = NULL, load.file = NULL, ...){
     
+    
+    # Load save file
     if(!is.null(load.file)){
         return(readRDS(load.file))
     }
     
-    query <- if(!is.null(region)){
-        region <- gsub("\\s", "%20", region)
-        seq(first.page, last.page, 1) %>% 
-            paste0("?country=", region, "&page=", .)
-    } else { 
-        seq(first.page, last.page, 1) %>% 
-            paste0("?page=", .)
+    # Match arguments and craft url suffix
+    platform <- match.arg(platform)
+    stat     <- match.arg(stat)
+    country  <- match.arg(country) %>% gsub("\\s", "%20", .)
+    mode     <- match.arg(mode)
+    
+    suffix <- if(stat == "Wl"){
+        suffix <- "/Wl"
+        if(mode != "none"){
+            suffix <- paste(suffix, "gamemode", mode, sep = "/")
+        }
+        suffix
+    } else if (stat == "Kd"){
+        "/Kd"
+    } else if (stat == "LongestHeadshot"){
+        "/LongestHeadshot"
+    } else if (stat == "AccuracyRatio"){
+        "/AccuracyRatio"
+    }
+    
+    if(country != "none"){
+        suffix <- paste0(suffix, "?country=", country)
+    }
+    
+    if((first.page > 1) || (last.page > first.page)){
+        pages  <- seq(first.page, last.page, 1)
+        suffix <- if(country != "none"){
+            paste0(suffix, "&page=", pages)
+        } else {
+            paste0(suffix, "?page=", pages)
+        }
     }
     
     
-    catalog <- paste0(url, query) %>% lapply(function(x) GET(x, ...))
+    # Retrieve webpages
+    catalog <- paste0(bf1URL, suffix) %>% lapply(function(x) GET(x, ...))
     
     # NOTE: this stage may not be robust to receiving a 404 response
     status <- vapply(catalog, function(x) x$status_code, integer(1))
@@ -109,18 +140,21 @@ parse_leaderboard <- function(page){
 ###################################################################################
 
 # Download leaderboards
-headshot <- paste0(bf1URL, "LongestHeadshot") %>% 
-    get_leaderboard(last.page = 200, region = country, 
-                    save.file = headshot.save.file)
+# headshot <- get_leaderboard(platform = "xbox", stat = "LongestHeadshot",
+#                             country = "United States", last.page = 200,
+#                             save.file = headshot.save.file)
+# 
+# 
+# kdr <- get_leaderboard(platform = "xbox", stat = "Kd", country = "United States",
+#                        last.page = 200, save.file = kd.save.file)
+# 
+# 
+# winrate <- get_leaderboard(platform = "xbox", stat = "Wl", 
+#                            country = "United States", last.page = 200,
+#                            save.file = winrate.save.file)
 
-
-kdr <- paste0(bf1URL, "Kd") %>% 
-    get_leaderboard(last.page = 200, region = country, 
-                    save.file = kd.save.file)
-
-
-winrate <- paste0(bf1URL, "Wl") %>% 
-    get_leaderboard(last.page = 200, region = country,
-                    save.file = winrate.save.file)
+winrate.conq <- get_leaderboard(platform = "xbox", stat = "Wl", 
+                                country = "United States", mode = "conquest",
+                                last.page = 200, save.file = winrate.conq.save.file)
 
 
