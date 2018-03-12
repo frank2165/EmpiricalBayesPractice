@@ -200,24 +200,46 @@ fit <- gamlss(cbind(Wins, Losses) ~ log(Games), data = regData,
 tidy.fit <- broom::tidy(fit)
 
 
-winrate <- mutate(winrate, mu = predict(fit, newdata = winrate, parameter = "mu"),
-                  sigma = predict(fit, newdata = winrate, parameter = "sigma", type = "response"), 
+winrate <- mutate(winrate, 
+                  mu = predict(fit, parameter = "mu", type = "response"),
+                  sigma = predict(fit, parameter = "sigma", type = "response"), 
                   a = mu / sigma, b = (1/sigma) - a, 
                   eb_reg_WinRate = (a + Wins) / (a + b + Games))
 
 
 
+# Plot of the shrinkage due to regressing WinRate on log(Games)
+ggplot(winrate, aes(x = eb_WinRate, y = eb_reg_WinRate)) + 
+    geom_point(aes(group = Games, colour = Games)) + 
+    geom_abline(intercept = 0, slope = 1, colour = "black") + 
+    scale_colour_continuous(low = "blue", high = "purple") + 
+    theme_bw()
+
+
+# Plot of histogram overlap between WinRate and shrunken estimate
 ggplot(winrate) + 
     geom_histogram(aes(x = WinRate), fill = "blue", colour = "black", alpha = 0.4, bins = 40) + 
     geom_histogram(aes(x = eb_reg_WinRate), fill = "red", colour = "black", alpha = 0.4, bins = 40) + 
     theme_classic()
 
 
-ggplot(winrate, aes(x = eb_WinRate, y = eb_reg_WinRate)) + 
-    geom_point(aes(group = Games, colour = Games)) + 
-    geom_abline(intercept = 0, slope = 1, colour = "black") + 
-    scale_colour_continuous(low = "#3a62f2", high = "#01005b") + 
-    theme_bw()
+# Plot of WinRate histogram against Beta-Binomial model
+ggplot(winrate) + 
+    geom_histogram(aes(x = WinRate, y = ..density..), fill = "blue", colour = "black", alpha = 0.4, bins = 40) + 
+    geom_density(aes(x = eb_reg_WinRate), colour = "red", size = 1) + 
+    theme_classic()
+
+
+## NOTES: Possible next step, Identify players that have a greater than 50% 
+##  winrate, with a posterior error probability of less than 1%. See how well
+##  the model applies to conquest WinRates for players in Australia and/or the
+##  UK. Is there a measurable regional difference? Can you calculate a set of
+##  probabilities that a player with an unknown region came from the US, UK or
+##  Australia?
+
+
+
+
 
 
 ###################################################################################
