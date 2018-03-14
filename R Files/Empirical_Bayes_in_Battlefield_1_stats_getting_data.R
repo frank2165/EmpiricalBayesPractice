@@ -4,11 +4,12 @@
 
 # Globals
 bf1URL  <- "https://battlefieldtracker.com/bf1/leaderboards/xbox/"
-country <- "United States"
 kd.save.file       <- "../Data/KdRatioLeaderboard.rd"
 winrate.save.file  <- "../Data/WinRateLeaderboard.rd"
 headshot.save.file <- "../Data/LongestHeadshotLeaderboard.rd"
-winrate.conq.save.file  <- "../Data/WinRateConquestLeaderboard.rd"
+winrate.conq.save.file <- "../Data/WinRateConquestLeaderboard.rd"
+winrate.aus.save.file  <- "../Data/WinRateConquestLeaderboard_AUS.rd"
+winrate.uk.save.file   <- "../Data/WinRateConquestLeaderboard_UK.rd"
 
 # Make sure 'Data' directory exists
 dir.create("../Data", showWarnings = FALSE)
@@ -158,3 +159,10 @@ winrate.conq <- get_leaderboard(platform = "xbox", stat = "Wl",
                                 last.page = 200, save.file = winrate.conq.save.file)
 
 
+winrate.aus <- get_leaderboard(platform = "xbox", stat = "Wl", 
+                               country = "Australia", mode = "conquest", 
+                               last.page = 200, save.file = winrate.aus.save.file)
+
+winrate.uk <- get_leaderboard(platform = "xbox", stat = "Wl", 
+                              country = "United Kingdom", mode = "conquest", 
+                              last.page = 200, save.file = winrate.uk.save.file)
