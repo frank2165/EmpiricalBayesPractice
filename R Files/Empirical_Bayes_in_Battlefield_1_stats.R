@@ -18,6 +18,8 @@ kd.save.file       <- "../Data/KdRatioLeaderboard.rd"
 winrate.save.file  <- "../Data/WinRateLeaderboard.rd"
 headshot.save.file <- "../Data/LongestHeadshotLeaderboard.rd"
 winrate.conq.save.file <- "../Data/WinRateConquestLeaderboard.rd"
+winrate.aus.save.file  <- "../Data/WinRateConquestLeaderboard_AUS.rd"
+winrate.uk.save.file   <- "../Data/WinRateConquestLeaderboard_UK.rd"
 
 
 # Attach Packages
@@ -89,7 +91,10 @@ kdr <- readRDS(file = kd.save.file) %>%
                as.numeric)
 
 
-winrate <- readRDS(file = winrate.conq.save.file) %>% 
+winrate <- map2(c("United States", "Australia", "United Kingdom"), 
+                c(winrate.conq.save.file, winrate.aus.save.file, winrate.uk.save.file),
+                function(ctry, file) readRDS(file) %>% mutate(Country = ctry)) %>% 
+    do.call("rbind", .) %>% 
     rename(WinRate = "Win %") %>% 
     mutate(WinRate = WinRate %>% 
                strsplit("\n") %>% 
@@ -97,7 +102,12 @@ winrate <- readRDS(file = winrate.conq.save.file) %>%
                gsub("\\,", "", .) %>%
                as.numeric, 
            WinRate = WinRate / 100, 
-           Games   = as.integer(Games))
+           Games   = as.integer(Games), 
+           Wins    = WinRate * Games, 
+           Losses  = (1-WinRate) * Games, 
+           Wins.approx = round(Wins), 
+           Losses.approx = Games - Wins.approx)
+
 
 
 ###################################################################################
@@ -108,30 +118,32 @@ winrate <- readRDS(file = winrate.conq.save.file) %>%
 ##  seem fairly regular, i.e. unimodal with no large outliers.
 ##
 
-# Estimate the number of Wins and Losses, from the WinRate and number of Games,
-# NOTE: Will have to abide a non-integer number of both due to the numerical precison
-#   of the WinRate (2 decimal places).
-winrate <- mutate(winrate, Wins = Games * WinRate, Losses = Games * (1 - WinRate))
+# Model Building to be performed on the United States players
+winrate.us <- dplyr::filter(winrate, Country == "United States")
 
 
 # Examine data and look for a "typical" distribution
-data_histogram(winrate, "WinRate", nbins = 50)
-data_histogram(winrate, "Games", nbins = 100) + 
+data_histogram(winrate.us, "WinRate", nbins = 50)
+data_histogram(winrate.us, "Games", nbins = 100) + 
     scale_x_continuous(breaks = seq(0, max(winrate$Games), 500))
 
-games.binned <- hist(winrate$Games, breaks = seq(0, max(winrate$Games)+50, 50), plot = FALSE)
+games.binned <- hist(winrate.us$Games, breaks = seq(0, max(winrate$Games)+50, 50), plot = FALSE)
 games.mode   <- games.binned$mids[which.max(games.binned$density)]
 
 
-ggplot(mapping = aes(x = WinRate)) + 
-    geom_density(data = winrate, colour = "red", size = 1) + 
-    geom_density(data = dplyr::filter(winrate, Games > mceiling(games.mode, 500)), 
-                 colour = "blue", size = 1) + 
-    theme_classic()
+mutate(winrate.us, InSample = Games > (mceiling(games.mode, 100))) %>% 
+    dplyr::filter(InSample) %>% 
+    ggplot(mapping = aes(x = WinRate)) + 
+        geom_density(data = winrate.us, colour = "blue", size = 1) + 
+        geom_density(colour = "red", size = 1) + 
+        labs(x = "Win Rate (Wins/Losses)", y = "Density", 
+             caption = "Distribution of WinRate for each dataset: All players (blue), experienced players (red).") + 
+        theme_classic() + 
+        theme(plot.caption = element_text(hjust = 0.5))
 
 
 # Data for fitting prior distribution hyper-parameters
-prior.data <- dplyr::filter(winrate, Games > mfloor(games.mode, 50)) %>% 
+prior.data <- dplyr::filter(winrate.us, Games > mfloor(games.mode, 50)) %>% 
     mutate(Wins = round(Wins), Losses = Games - Wins)
 
 
@@ -169,23 +181,33 @@ ggplot(prior.data, aes(x = WinRate)) +
 
 # Go ahead and make predictions anyway
 prior.pars$aplusb <- prior.pars$a + prior.pars$b
-winrate <- mutate(winrate, eb_WinRate = (prior.pars$a + Wins) / 
+winrate.us <- mutate(winrate.us, eb_WinRate = (prior.pars$a + Wins) / 
                       (prior.pars$aplusb + Games))
 
 
-ggplot(winrate) + 
-    geom_histogram(aes(x = WinRate), fill = "blue", colour = "black", alpha = 0.4, bins = 40) + 
-    geom_histogram(aes(x = eb_WinRate), fill = "red", colour = "black", alpha = 0.4, bins = 40) + 
+gather(winrate.us, Source, WinRate, WinRate, eb_WinRate) %>% 
+    mutate(Source = ifelse(grepl("eb_", Source), "Predicted", "Observed")) %>% 
+    ggplot(aes(x = WinRate)) + 
+        geom_histogram(aes(fill = Source), colour = "black", position = "identity", 
+                       alpha = 0.4, bins = 40) + 
+        scale_fill_manual(values = c(Predicted = "red", Observed = "blue")) +
     theme_classic()
+
+gather(winrate.us, Source, WinRate, WinRate, eb_WinRate) %>% 
+    mutate(Source = ifelse(grepl("eb_", Source), "Predicted", "Observed")) %>% 
+    ggplot(aes(x = WinRate)) + 
+        geom_density(aes(colour = Source), size = 1) + 
+        scale_colour_manual(values = c(Predicted = "red", Observed = "blue")) +
+        theme_classic()
 
 
 # Relationship (or lack thereof) between Win rate and Games played
-ggplot(winrate, aes(x = log(Games), y = WinRate)) + 
+ggplot(winrate.us, aes(x = log(Games), y = WinRate)) + 
     geom_point() + 
     geom_smooth(method = "lm", colour = "red") + 
     theme_bw()
 
-ggplot(winrate, aes(x = log(Games), y = eb_WinRate)) + 
+ggplot(winrate.us, aes(x = log(Games), y = eb_WinRate)) + 
     geom_point() + 
     geom_smooth(method = "lm", colour = "red") + 
     theme_bw()
@@ -193,38 +215,47 @@ ggplot(winrate, aes(x = log(Games), y = eb_WinRate)) +
 
 
 # Regression time
-regData <- mutate(winrate, Wins = round(Wins), Losses = Games - Wins)
-fit <- gamlss(cbind(Wins, Losses) ~ log(Games), data = regData,
+fit <- gamlss(cbind(Wins.approx, Losses.approx) ~ log(Games), data = winrate.us,
               family = BB(mu.link = "logit"))
 
-tidy.fit <- broom::tidy(fit)
 
-
-winrate <- mutate(winrate, 
-                  mu = predict(fit, parameter = "mu", type = "response"),
-                  sigma = predict(fit, parameter = "sigma", type = "response"), 
-                  a = mu / sigma, b = (1/sigma) - a, 
-                  eb_reg_WinRate = (a + Wins) / (a + b + Games))
+tidy.fit   <- broom::tidy(fit)
+winrate.us <- mutate(winrate.us, 
+                     mu    = predict(fit, parameter = "mu", type = "response"),
+                     sigma = predict(fit, parameter = "sigma", type = "response"), 
+                     a     = mu / sigma, 
+                     b     = (1/sigma) - a, 
+                     eb_reg_WinRate = (a + Wins) / (a + b + Games))
 
 
 
 # Plot of the shrinkage due to regressing WinRate on log(Games)
-ggplot(winrate, aes(x = eb_WinRate, y = eb_reg_WinRate)) + 
-    geom_point(aes(group = Games, colour = Games)) + 
+ggplot(winrate.us, aes(x = eb_WinRate, y = eb_reg_WinRate)) + 
+    geom_point(aes(group = Games, colour = Games, size = Games)) + 
     geom_abline(intercept = 0, slope = 1, colour = "black") + 
     scale_colour_continuous(low = "blue", high = "purple") + 
     theme_bw()
 
 
 # Plot of histogram overlap between WinRate and shrunken estimate
-ggplot(winrate) + 
-    geom_histogram(aes(x = WinRate), fill = "blue", colour = "black", alpha = 0.4, bins = 40) + 
-    geom_histogram(aes(x = eb_reg_WinRate), fill = "red", colour = "black", alpha = 0.4, bins = 40) + 
-    theme_classic()
+gather(winrate.us, Source, WinRate, WinRate, eb_reg_WinRate) %>% 
+    mutate(Source = ifelse(grepl("eb_", Source), "Predicted", "Observed")) %>% 
+    ggplot(aes(x = WinRate)) + 
+        geom_histogram(aes(fill = Source), colour = "black", position = "identity", 
+                       alpha = 0.4, bins = 40) + 
+        scale_fill_manual(values = c(Predicted = "red", Observed = "blue")) +
+        theme_classic()
+
+gather(winrate.us, Source, WinRate, WinRate, eb_reg_WinRate) %>% 
+    mutate(Source = ifelse(grepl("eb_", Source), "Predicted", "Observed")) %>% 
+    ggplot(aes(x = WinRate)) + 
+        geom_density(aes(colour = Source), size = 1) + 
+        scale_colour_manual(values = c(Predicted = "red", Observed = "blue")) +
+        theme_classic()
 
 
 # Plot of WinRate histogram against Beta-Binomial model
-ggplot(winrate) + 
+ggplot(winrate.us) + 
     geom_histogram(aes(x = WinRate, y = ..density..), fill = "blue", colour = "black", alpha = 0.4, bins = 40) + 
     geom_density(aes(x = eb_reg_WinRate), colour = "red", size = 1) + 
     theme_classic()
@@ -239,6 +270,58 @@ ggplot(winrate) +
 
 
 
+
+
+
+# Distribution of win rates for Australian and U.K. players shown against the model
+# developed for the United States players
+winrate <- mutate(winrate, 
+                  mu    = predict(fit, newdata = winrate, parameter = "mu", type = "response"),
+                  sigma = predict(fit, newdata = winrate, parameter = "sigma", type = "response"), 
+                  a     = mu / sigma, 
+                  b     = (1/sigma) - a, 
+                  eb_reg_WinRate = (a + Wins) / (a + b + Games))
+
+
+ggplot(winrate) + 
+    geom_density(aes(x = eb_reg_WinRate, colour = Country), size = 1) + 
+    scale_colour_manual(values = c(`United States` = "black", Australia = "blue", 
+                                   `United Kingdom` = "darkgreen")) + 
+    theme_classic()
+
+
+
+dplyr::filter(winrate, Country != "United States") %>% 
+    ggplot() + 
+        geom_histogram(aes(x = WinRate, y = ..density..), fill = "blue", colour = "black", 
+                       alpha = 0.4, bins = 29) + 
+        geom_density(aes(x = eb_reg_WinRate), colour = "red", size = 1) + 
+        facet_wrap(~Country) + 
+        theme_classic()
+
+
+ggplot(winrate, aes(x = log(Games), y = WinRate)) + 
+    geom_point() + 
+    geom_smooth(method = "lm", colour = "red") + 
+    facet_wrap(~Country) + 
+    theme_bw()
+
+
+# Re-estimate parameters of experience curve
+fit.aus <- dplyr::filter(winrate, Country == "Australia") %>% 
+    gamlss(formula = cbind(Wins.approx, Losses.approx) ~ log(Games), data = ., 
+           family = BB(mu.link = "logit"))
+
+fit.uk <- dplyr::filter(winrate, Country == "United Kingdom") %>% 
+    gamlss(formula = cbind(Wins.approx, Losses.approx) ~ log(Games), data = ., 
+           family = BB(mu.link = "logit"))
+
+tidy.fit.aus <- broom::tidy(fit.aus) %>% mutate(Country = "Aus")
+tidy.fit.uk  <- broom::tidy(fit.uk) %>% mutate(Country = "UK")
+tidy.fit.us  <- mutate(tidy.fit, Country = "US")
+
+tidy.fit <- rbind(tidy.fit.aus, tidy.fit.uk, tidy.fit.us) %>% 
+    dplyr::select(Country, everything())
 
 
 
